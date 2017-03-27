@@ -53,8 +53,12 @@ var _ gcmAble = (*aesCipherGCM)(nil)
 
 // NewGCM returns the AES cipher wrapped in Galois Counter Mode. This is only
 // called by crypto/cipher.NewGCM via the gcmAble interface.
-func (c *aesCipherGCM) NewGCM(nonceSize int) (cipher.AEAD, error) {
-	g := &gcmAsm{ks: c.enc, nonceSize: nonceSize}
+func (c *aesCipherGCM) NewGCM(nonceSize, tagSize int) (cipher.AEAD, error) {
+	if tagSize < 8 || tagSize > 16 {
+		return nil, errors.New("cipher: NewGCM requires a tag size in range [8-16] bytes")
+	}
+
+	g := &gcmAsm{ks: c.enc, nonceSize: nonceSize, tagSize: tagSize}
 	gcmAesInit(&g.productTable, g.ks)
 	return g, nil
 }
@@ -68,6 +72,8 @@ type gcmAsm struct {
 	productTable [256]byte
 	// nonceSize contains the expected size of the nonce, in bytes.
 	nonceSize int
+	// tagSize contains the expected size of the tag, in bytes
+	tagSize int
 }
 
 func (g *gcmAsm) NonceSize() int {
@@ -75,7 +81,7 @@ func (g *gcmAsm) NonceSize() int {
 }
 
 func (*gcmAsm) Overhead() int {
-	return gcmTagSize
+	return g.tagSize
 }
 
 // sliceForAppend takes a slice and a requested number of bytes. It returns a
@@ -120,12 +126,12 @@ func (g *gcmAsm) Seal(dst, nonce, plaintext, data []byte) []byte {
 	var tagOut [gcmTagSize]byte
 	gcmAesData(&g.productTable, data, &tagOut)
 
-	ret, out := sliceForAppend(dst, len(plaintext)+gcmTagSize)
+	ret, out := sliceForAppend(dst, len(plaintext)+g.tagSize)
 	if len(plaintext) > 0 {
 		gcmAesEnc(&g.productTable, out, plaintext, &counter, &tagOut, g.ks)
 	}
 	gcmAesFinish(&g.productTable, &tagMask, &tagOut, uint64(len(plaintext)), uint64(len(data)))
-	copy(out[len(plaintext):], tagOut[:])
+	copy(out[len(plaintext):], tagOut[:g.tagSize])
 
 	return ret
 }

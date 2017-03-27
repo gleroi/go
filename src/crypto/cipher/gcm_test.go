@@ -16,9 +16,11 @@ import (
 	"testing"
 )
 
-var aesGCMTests = []struct {
+type aesTest struct {
 	key, nonce, plaintext, ad, result string
-}{
+}
+
+var aesGCMTests = []aesTest{
 	{
 		"11754cd72aec309bf52f7687212e8957",
 		"3c819d9a9bed087615030b65",
@@ -190,59 +192,115 @@ var aesGCMTests = []struct {
 	},
 }
 
+type aesCustomTagTest struct {
+	key, nonce, plaintext, ad, result string
+	tagSize                           int
+}
+
+var aesGCMCustomTagsTests = []aesCustomTagTest{
+	{
+		"ab72c77b97cb5fe9a382d9fe81ffdbed",
+		"54cc7dc2c37ec006bcc6d1da",
+		"007c5e5b3e59df24a7c355584fc1518d",
+		"",
+		"0e1bde206a07a9c2c1b65300f8c649972b4401346697138c7a4891ee59867d",
+		15,
+	},
+	{
+		"fe47fcce5fc32665d2ae399e4eec72ba",
+		"5adb9609dbaeb58cbd6e7275",
+		"7c0e88c88899a779228465074797cd4c2e1498d259b54390b85e3eef1c02df60e743f1b840382c4bccaf3bafb4ca8429bea063",
+		"88319d6e1d3ffa5f987199166c8a9b56c2aeba5a",
+		"98f4826f05a265e6dd2be82db241c0fbbbf9ffb1c173aa83964b7cf5393043736365253ddbc5db8778371495da76d269e5db3e291ef1982e4defedaa2249f89855",
+		14,
+	},
+	{
+		"ec0c2ba17aa95cd6afffe949da9cc3a8",
+		"296bce5b50b7d66096d627ef",
+		"b85b3753535b825cbe5f632c0b843c741351f18aa484281aebec2f45bb9eea2d79d987b764b9611f6c0f8641843d5d58f3a242",
+		"f8d00f05d22bf68599bcdeb131292ad6e2df5d14",
+		"a7443d31c26bdf2a1c945e29ee4bd344a99cfaf3aa71f8b3f191f83c2adfc7a07162995506fde6309ffc19e716eddf1a828c5a890147971946b627c40016da1e",
+		13,
+	},
+	{
+		"2c1f21cf0f6fb3661943155c3e3d8492",
+		"23cb5ff362e22426984d1907",
+		"42f758836986954db44bf37c6ef5e4ac0adaf38f27252a1b82d02ea949c8a1a2dbc0d68b5615ba7c1220ff6510e259f06655d8",
+		"5d3624879d35e46849953e45a32a624d6a6c536ed9857c613b572b0333e701557a713e3f010ecdf9a6bd6c9e3e44b065208645aff4aabee611b391528514170084ccf587177f4488f33cfb5e979e42b6e1cfc0a60238982a7aec",
+		"81824f0e0d523db30d3da369fdc0d60894c7a0a20646dd015073ad2732bd989b14a222b6ad57af43e1895df9dca2a5344a62cc57a3ee28136e94c74838997a",
+		12,
+	},
+}
+
 func TestAESGCM(t *testing.T) {
-	for i, test := range aesGCMTests {
-		key, _ := hex.DecodeString(test.key)
-		aes, err := aes.NewCipher(key)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		nonce, _ := hex.DecodeString(test.nonce)
-		plaintext, _ := hex.DecodeString(test.plaintext)
-		ad, _ := hex.DecodeString(test.ad)
-		aesgcm, err := cipher.NewGCMWithNonceSize(aes, len(nonce))
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ct := aesgcm.Seal(nil, nonce, plaintext, ad)
-		if ctHex := hex.EncodeToString(ct); ctHex != test.result {
-			t.Errorf("#%d: got %s, want %s", i, ctHex, test.result)
-			continue
-		}
-
-		plaintext2, err := aesgcm.Open(nil, nonce, ct, ad)
-		if err != nil {
-			t.Errorf("#%d: Open failed", i)
-			continue
-		}
-
-		if !bytes.Equal(plaintext, plaintext2) {
-			t.Errorf("#%d: plaintext's don't match: got %x vs %x", i, plaintext2, plaintext)
-			continue
-		}
-
-		if len(ad) > 0 {
-			ad[0] ^= 0x80
-			if _, err := aesgcm.Open(nil, nonce, ct, ad); err == nil {
-				t.Errorf("#%d: Open was successful after altering additional data", i)
-			}
-			ad[0] ^= 0x80
-		}
-
-		nonce[0] ^= 0x80
-		if _, err := aesgcm.Open(nil, nonce, ct, ad); err == nil {
-			t.Errorf("#%d: Open was successful after altering nonce", i)
-		}
-		nonce[0] ^= 0x80
-
-		ct[0] ^= 0x80
-		if _, err := aesgcm.Open(nil, nonce, ct, ad); err == nil {
-			t.Errorf("#%d: Open was successful after altering ciphertext", i)
-		}
-		ct[0] ^= 0x80
+	for i, testCase := range aesGCMTests {
+		testAESGCMForTagSize(t, i, testCase, 16)
 	}
+}
+
+func TestAESCustomGCM(t *testing.T) {
+	for i, testCase := range aesGCMCustomTagsTests {
+		test := aesTest{
+			key:       testCase.key,
+			nonce:     testCase.nonce,
+			plaintext: testCase.plaintext,
+			result:    testCase.result,
+		}
+		testAESGCMForTagSize(t, i, test, testCase.tagSize)
+	}
+}
+
+func testAESGCMForTagSize(t *testing.T, i int, test aesTest, tagSize int) {
+	key, _ := hex.DecodeString(test.key)
+	aes, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nonce, _ := hex.DecodeString(test.nonce)
+	plaintext, _ := hex.DecodeString(test.plaintext)
+	ad, _ := hex.DecodeString(test.ad)
+	aesgcm, err := cipher.NewGCMWithTagSize(aes, len(nonce), tagSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ct := aesgcm.Seal(nil, nonce, plaintext, ad)
+	if ctHex := hex.EncodeToString(ct); ctHex != test.result {
+		t.Errorf("#%d: got %s, want %s", i, ctHex, test.result)
+		continue
+	}
+
+	plaintext2, err := aesgcm.Open(nil, nonce, ct, ad)
+	if err != nil {
+		t.Errorf("#%d: Open failed", i)
+		continue
+	}
+
+	if !bytes.Equal(plaintext, plaintext2) {
+		t.Errorf("#%d: plaintext's don't match: got %x vs %x", i, plaintext2, plaintext)
+		continue
+	}
+
+	if len(ad) > 0 {
+		ad[0] ^= 0x80
+		if _, err := aesgcm.Open(nil, nonce, ct, ad); err == nil {
+			t.Errorf("#%d: Open was successful after altering additional data", i)
+		}
+		ad[0] ^= 0x80
+	}
+
+	nonce[0] ^= 0x80
+	if _, err := aesgcm.Open(nil, nonce, ct, ad); err == nil {
+		t.Errorf("#%d: Open was successful after altering nonce", i)
+	}
+	nonce[0] ^= 0x80
+
+	ct[0] ^= 0x80
+	if _, err := aesgcm.Open(nil, nonce, ct, ad); err == nil {
+		t.Errorf("#%d: Open was successful after altering ciphertext", i)
+	}
+	ct[0] ^= 0x80
 }
 
 func TestTagFailureOverwrite(t *testing.T) {
